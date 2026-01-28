@@ -1,0 +1,20 @@
+# dbt Analytics Component with materialization-based automation policies
+# - Views: code_version_changed | newly_updated (refresh on code change)
+# - Mart tables: on_cron daily at 6 AM UTC
+# - Other tables: on_cron hourly
+type: dbt_automation_demo.defs.analytics.component.CustomDbtComponent
+
+attributes:
+  project:
+    project_dir: "{{ project_root }}/analytics_dbt"
+    profiles_dir: "{{ project_root }}/analytics_dbt"
+---
+# Hourly schedule for dbt mart tables with run-in-progress protection
+# Before each tick, checks if selected assets are already running and skips if so
+type: dbt_automation_demo.defs.components.safe_scheduled_job_component.SafeScheduledJobComponent
+
+attributes:
+  job_name: "hourly_dbt_tables_job"
+  cron_schedule: "0 * * * *"  # Every hour on the hour
+  asset_selection: "tag:marts"  # Select dbt mart tables (not staging views)
+  skip_reason_prefix: "Hourly dbt tables schedule"

@@ -1,0 +1,23 @@
+name: 'analytics_dbt'
+version: '1.0.0'
+
+profile: 'analytics_dbt'
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+analysis-paths: ["analyses"]
+macro-paths: ["macros"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  analytics_dbt:
+    staging:
+      +materialized: view
+      +tags: ["staging"]
+    marts:
+      +materialized: table
+      +tags: ["marts"]
