@@ -376,6 +376,83 @@ dg.AutomationCondition.on_cron("0 6 * * *") | dg.AutomationCondition.newly_updat
 dg.AutomationCondition.on_cron("0 6 * * *")  # This is built into on_cron already
 ```
 
+## Testing
+
+The automation conditions are thoroughly tested with unit tests to verify the correct behavior for each asset type.
+
+### Running Tests
+
+```bash
+# Run all automation condition tests
+uv run pytest tests/test_automation_conditions.py -v
+
+# Run a specific test class
+uv run pytest tests/test_automation_conditions.py::TestViewAutomation -v
+
+# Run with coverage
+uv run pytest tests/test_automation_conditions.py --cov=dbt_automation_demo
+```
+
+### Test Summary
+
+| Test Class | Tests | What It Verifies |
+|------------|-------|------------------|
+| `TestViewAutomation` | 4 | Views use `code_version_changed \| newly_updated` |
+| `TestStagingTable2MinRefresh` | 4 | Tables with `refresh_2min` tag use 2-minute cron |
+| `TestMartTableDailyCron` | 4 | Mart tables use daily cron with midnight lookback |
+| `TestOtherNonViewAssets` | 3 | Other non-view assets use hourly cron |
+| `TestMaterializationTagging` | 4 | Assets are tagged with `dagster/materialization` |
+| `TestIgnoreSelection` | 3 | Cron conditions ignore view dependencies |
+
+**Total: 22 tests**
+
+### Test Strategy
+
+The tests validate automation conditions at two levels:
+
+1. **Condition Structure Tests** - Verify the correct `AutomationCondition` type is applied:
+   ```python
+   def test_view_has_code_version_or_newly_updated(self):
+       """Views should trigger on code changes or upstream updates."""
+       spec = self._get_spec_for_model("stg_customers")
+       condition_str = str(spec.automation_condition)
+       assert "CodeVersionChanged" in condition_str
+       assert "NewlyUpdated" in condition_str
+   ```
+
+2. **Ignore Selection Tests** - Verify that cron-based conditions properly exclude view dependencies:
+   ```python
+   def test_2min_table_ignores_view_deps(self):
+       """2-min refresh tables should ignore view dependencies."""
+       spec = self._get_spec_for_model("stg_orders_enriched")
+       condition_str = str(spec.automation_condition)
+       assert "dagster/materialization" in condition_str
+       assert "view" in condition_str
+   ```
+
+3. **Tag Application Tests** - Verify programmatic tagging works correctly:
+   ```python
+   def test_view_tagged_as_view(self):
+       """Views should have dagster/materialization=view tag."""
+       spec = self._get_spec_for_model("stg_customers")
+       assert spec.tags.get("dagster/materialization") == "view"
+   ```
+
+### Key Testing Insights
+
+- **Condition String Inspection**: Tests use `str(spec.automation_condition)` to inspect the condition tree
+- **Asset Graph Loading**: Tests use `defs.resolve_asset_graph().get_all_asset_keys()` to validate asset creation
+- **Model Selection**: Tests filter assets by checking if the model name is in the asset key path
+
+### Test File Structure
+
+```
+tests/
+└── test_automation_conditions.py    # 22 unit tests for automation conditions
+```
+
+The test file loads the actual Dagster definitions and inspects the generated `AssetSpec` objects, ensuring that the automation logic works correctly with real dbt project metadata.
+
 ## References
 
 - [Dagster Declarative Automation](https://docs.dagster.io/concepts/automation/declarative-automation)
