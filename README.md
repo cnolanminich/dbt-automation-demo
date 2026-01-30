@@ -5,9 +5,10 @@ This Dagster project demonstrates **materialization-based declarative automation
 ## Key Concepts Demonstrated
 
 1. **Declarative Automation Conditions** - Different refresh strategies based on asset type
-2. **Custom dbt Component** - Subclassing `DbtProjectComponent` to customize automation
-3. **Safe Scheduled Jobs** - A schedule that checks for running assets before execution
-4. **YAML Consolidation** - Multiple component definitions in a single file using `---` separators
+2. **Programmatic Materialization Tagging** - Auto-tagging assets with `dagster/materialization` for selection
+3. **Custom dbt Component** - Subclassing `DbtProjectComponent` to customize automation
+4. **Safe Scheduled Jobs** - A schedule that checks for running assets before execution
+5. **YAML Consolidation** - Multiple component definitions in a single file using `---` separators
 
 ## Automation Strategy
 
@@ -43,6 +44,32 @@ dg.AutomationCondition.on_cron("0 6 * * *") & ~dg.AutomationCondition.in_progres
 - `&` (AND) - Both conditions must be true
 
 **Important:** `on_cron()` does NOT include `~in_progress()` by default. You must add it explicitly to prevent overlapping runs.
+
+### Programmatic Materialization Tagging
+
+Each dbt model is automatically tagged with `dagster/materialization` based on its dbt config:
+
+| dbt Materialization | Dagster Tag |
+|---------------------|-------------|
+| `view` | `dagster/materialization=view` |
+| `table` | `dagster/materialization=table` |
+| `incremental` | `dagster/materialization=incremental` |
+| `ephemeral` | `dagster/materialization=ephemeral` |
+
+This enables **programmatic asset selection** in schedules and jobs:
+
+```yaml
+# Select only tables (exclude views)
+asset_selection: "tag:dagster/materialization=table"
+
+# Select all dbt assets except views
+asset_selection: "kind:dbt - tag:dagster/materialization=view"
+
+# Select views only
+asset_selection: "tag:dagster/materialization=view"
+```
+
+This approach is more robust than folder-based selection (`tag:marts`) because it uses the actual dbt materialization config, not the directory structure.
 
 ## Project Structure
 
@@ -121,6 +148,10 @@ class CustomDbtComponent(DbtProjectComponent):
         node = self.get_resource_props(manifest, unique_id)
         materialized = node.get("config", {}).get("materialized", "view")
 
+        # Add materialization tag for programmatic selection
+        existing_tags = dict(base_spec.tags) if base_spec.tags else {}
+        existing_tags["dagster/materialization"] = materialized
+
         if materialized == "view":
             # Views: refresh on code change or upstream update
             automation_condition = (
@@ -134,7 +165,10 @@ class CustomDbtComponent(DbtProjectComponent):
                 & ~dg.AutomationCondition.in_progress()
             )
 
-        return base_spec.replace_attributes(automation_condition=automation_condition)
+        return base_spec.replace_attributes(
+            automation_condition=automation_condition,
+            tags=existing_tags,
+        )
 ```
 
 ### 2. SafeScheduledJobComponent (`defs/components/safe_scheduled_job_component.py`)
@@ -196,11 +230,12 @@ attributes:
     profiles_dir: "{{ project_root }}/analytics_dbt"
 ---
 # Hourly schedule with run-in-progress protection
+# Uses dagster/materialization tag to programmatically select tables only
 type: dbt_automation_demo.defs.components.safe_scheduled_job_component.SafeScheduledJobComponent
 attributes:
   job_name: "hourly_dbt_tables_job"
   cron_schedule: "0 * * * *"
-  asset_selection: "tag:marts"
+  asset_selection: "tag:dagster/materialization=table"  # Excludes views programmatically
   skip_reason_prefix: "Hourly dbt tables schedule"
 ```
 

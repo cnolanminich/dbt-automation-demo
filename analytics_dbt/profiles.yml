@@ -3,5 +3,5 @@ analytics_dbt:
   outputs:
     dev:
       type: duckdb
-      path: ':memory:'
+      path: dev.duckdb  # Persistent database file
       threads: 4
