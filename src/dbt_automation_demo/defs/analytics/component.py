@@ -71,7 +71,7 @@ class CustomDbtComponent(DbtProjectComponent):
             # Views: refresh when new (missing) or when code version changes
             # Does NOT refresh on upstream updates - only on code changes
             automation_condition = (
-                dg.AutomationCondition.on_missing()
+                dg.AutomationCondition.missing()
                 | dg.AutomationCondition.code_version_changed()
             )
         elif "refresh_2min" in dbt_tags:
