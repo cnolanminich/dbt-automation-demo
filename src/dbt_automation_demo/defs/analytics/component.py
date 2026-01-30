@@ -1,13 +1,13 @@
 """Custom dbt component with materialization-based automation policies.
 
 Automation Policy Strategy:
-- VIEWS (staging models): on_missing | code_version_changed | newly_updated
-  - Views are cheap to recreate, so we refresh them when missing, code changes, or upstream updates
+- VIEWS (staging models): on_missing | code_version_changed
+  - Views refresh when new (missing) or when code changes - NOT on upstream updates
 - TABLES with 'refresh_2min' tag: on_cron every 2 minutes
   - For staging tables that need frequent refresh
-- NON-VIEW dbt models (tables in marts): on_cron daily at 6 AM UTC
+- NON-VIEW dbt models (tables in marts): on_cron every minute
   - Ignores view dependencies (views update reactively)
-  - Checks if deps updated since midnight (not since cron tick)
+  - Checks if deps updated in last 10 minutes
 - Other non-view assets: on_cron hourly
 
 Each asset is tagged with `dagster/materialization` (view, table, incremental, etc.)
@@ -30,9 +30,9 @@ class CustomDbtComponent(DbtProjectComponent):
     This component automatically:
     1. Tags each model with `dagster/materialization` based on dbt config
     2. Assigns different automation conditions:
-       - Views: on_missing | code_version_changed | newly_updated
+       - Views: on_missing | code_version_changed
        - Tables with 'refresh_2min' dbt tag: on_cron every 2 minutes
-       - Mart tables: on_cron daily (6 AM UTC), ignores view deps, midnight lookback
+       - Mart tables: on_cron every minute, ignores view deps, 10-minute lookback
        - Other tables: on_cron hourly
 
     All cron-based automations include ~in_progress() to prevent overlapping runs.
@@ -68,12 +68,11 @@ class CustomDbtComponent(DbtProjectComponent):
 
         # Determine the automation condition based on materialization and tags
         if materialized == "view":
-            # Views: refresh when missing, on code version change, or when upstream updates
-            # on_missing() is critical for new assets that have never been materialized
+            # Views: refresh when new (missing) or when code version changes
+            # Does NOT refresh on upstream updates - only on code changes
             automation_condition = (
                 dg.AutomationCondition.on_missing()
                 | dg.AutomationCondition.code_version_changed()
-                | dg.AutomationCondition.newly_updated()
             )
         elif "refresh_2min" in dbt_tags:
             # Staging tables with refresh_2min tag: every 2 minutes
@@ -85,13 +84,13 @@ class CustomDbtComponent(DbtProjectComponent):
                 & ~dg.AutomationCondition.in_progress()
             )
         elif "marts" in fqn:
-            # Mart tables (analytics): daily refresh at 6 AM UTC
+            # Mart tables (analytics): trigger every minute, but only if deps updated in last 10 min
             # - Ignores view dependencies (views refresh reactively via newly_updated)
-            # - Uses midnight lookback for dependency check (not 6 AM)
-            #   This allows upstream tables that run between midnight and 6 AM to count
+            # - Uses 10-minute lookback for dependency check
+            #   This allows upstream tables that ran recently to trigger mart refresh
             automation_condition = (
-                dg.AutomationCondition.cron_tick_passed("* * * * *")  # Trigger at 6 AM
-                & dg.AutomationCondition.all_deps_updated_since_cron("0 0 * * *").ignore(
+                dg.AutomationCondition.cron_tick_passed("* * * * *")  # Trigger every minute
+                & dg.AutomationCondition.all_deps_updated_since_cron("*/10 * * * *").ignore(
                     dg.AssetSelection.tag("dagster/materialization", "view")  # Ignore views
                 )
                 & ~dg.AutomationCondition.in_progress()

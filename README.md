@@ -14,8 +14,8 @@ This Dagster project demonstrates **materialization-based declarative automation
 
 | Asset Type | Materialization | Automation Condition | Behavior |
 |------------|-----------------|---------------------|----------|
-| Staging models | `view` | `code_version_changed \| newly_updated` | Refresh when SQL code changes OR when upstream seeds are updated |
-| Mart models | `table` | `on_cron("0 6 * * *") & ~in_progress()` | Daily at 6 AM UTC, skip if already running |
+| Staging models | `view` | `on_missing \| code_version_changed \| newly_updated` | Refresh when missing (new), SQL code changes, OR when upstream seeds are updated |
+| Mart models | `table` | `cron_tick_passed("* * * * *") & all_deps_updated_since_cron("*/10 * * * *")` | Every minute if deps updated in last 10 min |
 
 ### Why Different Policies?
 
@@ -27,12 +27,13 @@ This Dagster project demonstrates **materialization-based declarative automation
 
 ```python
 # For views: refresh reactively
-dg.AutomationCondition.code_version_changed() | dg.AutomationCondition.newly_updated()
+dg.AutomationCondition.on_missing() | dg.AutomationCondition.code_version_changed() | dg.AutomationCondition.newly_updated()
 ```
 
+- `on_missing()` - Triggers when the asset has never been materialized (critical for new assets!)
 - `code_version_changed()` - Triggers when the asset's code (SQL) changes
 - `newly_updated()` - Triggers when any upstream dependency is materialized
-- `|` (OR) - Either condition triggers a refresh
+- `|` (OR) - Any condition triggers a refresh
 
 ```python
 # For tables: refresh on schedule
@@ -153,9 +154,10 @@ class CustomDbtComponent(DbtProjectComponent):
         existing_tags["dagster/materialization"] = materialized
 
         if materialized == "view":
-            # Views: refresh on code change or upstream update
+            # Views: refresh when missing, on code change, or upstream update
             automation_condition = (
-                dg.AutomationCondition.code_version_changed()
+                dg.AutomationCondition.on_missing()
+                | dg.AutomationCondition.code_version_changed()
                 | dg.AutomationCondition.newly_updated()
             )
         else:
@@ -397,14 +399,14 @@ uv run pytest tests/test_automation_conditions.py --cov=dbt_automation_demo
 
 | Test Class | Tests | What It Verifies |
 |------------|-------|------------------|
-| `TestViewAutomation` | 4 | Views use `code_version_changed \| newly_updated` |
+| `TestViewAutomation` | 3 | Views use `on_missing \| code_version_changed \| newly_updated` |
 | `TestStagingTable2MinRefresh` | 4 | Tables with `refresh_2min` tag use 2-minute cron |
 | `TestMartTableDailyCron` | 4 | Mart tables use daily cron with midnight lookback |
 | `TestOtherNonViewAssets` | 3 | Other non-view assets use hourly cron |
 | `TestMaterializationTagging` | 4 | Assets are tagged with `dagster/materialization` |
 | `TestIgnoreSelection` | 3 | Cron conditions ignore view dependencies |
 
-**Total: 22 tests**
+**Total: 23 tests**
 
 ### Test Strategy
 

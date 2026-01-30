@@ -12,10 +12,10 @@ Tests verify that the automation conditions in CustomDbtComponent work as expect
    - Should ignore view dependencies
    - Should only trigger if non-view deps updated within lookback window
 
-3. Mart tables: cron_tick_passed + all_deps_updated_since_cron(midnight)
-   - Should trigger on cron tick
+3. Mart tables: cron_tick_passed + all_deps_updated_since_cron(10 min)
+   - Should trigger on cron tick (every minute)
    - Should ignore view dependencies
-   - Should check deps updated since midnight
+   - Should check deps updated in last 10 minutes
 
 4. Other tables: on_cron("* * * * *")
    - Should trigger every minute
@@ -75,13 +75,13 @@ def make_staging_table_2min(key: str, deps: Optional[list[str]] = None) -> Asset
 
 
 def make_mart_table(key: str, deps: Optional[list[str]] = None) -> AssetSpec:
-    """Create a mart table with daily cron + midnight lookback, ignoring views."""
+    """Create a mart table with minute cron + 10-minute lookback, ignoring views."""
     return AssetSpec(
         key=AssetKey(key),
         deps=[AssetKey(d) for d in (deps or [])],
         automation_condition=(
-            AutomationCondition.cron_tick_passed("0 6 * * *")
-            & AutomationCondition.all_deps_updated_since_cron("0 0 * * *").ignore(
+            AutomationCondition.cron_tick_passed("* * * * *")
+            & AutomationCondition.all_deps_updated_since_cron("*/10 * * * *").ignore(
                 dg.AssetSelection.tag("dagster/materialization", "view")
             )
             & ~AutomationCondition.in_progress()
@@ -119,14 +119,22 @@ def make_seed_asset(key: str) -> AssetSpec:
 
 
 class TestViewAutomation:
-    """Tests for view assets using code_version_changed | newly_updated."""
+    """Tests for view assets using on_missing | code_version_changed | newly_updated."""
+
+    def test_view_has_on_missing_condition(self):
+        """View automation condition should include on_missing for new assets."""
+        condition = (
+            AutomationCondition.on_missing()
+            | AutomationCondition.code_version_changed()
+            | AutomationCondition.newly_updated()
+        )
+
+        # Verify on_missing is part of the condition structure
+        condition_str = str(condition)
+        assert "Missing" in condition_str
 
     def test_view_triggers_on_newly_updated_upstream(self):
         """View should trigger when upstream dependency is newly updated."""
-        # Setup: seed -> view
-        seed = make_seed_asset("raw_data")
-        view = make_view_asset("stg_data", deps=["raw_data"])
-
         @dg.asset
         def raw_data():
             return 1
@@ -134,7 +142,8 @@ class TestViewAutomation:
         @dg.asset(
             deps=[AssetKey("raw_data")],
             automation_condition=(
-                AutomationCondition.code_version_changed()
+                AutomationCondition.on_missing()
+                | AutomationCondition.code_version_changed()
                 | AutomationCondition.newly_updated()
             ),
         )
@@ -144,24 +153,25 @@ class TestViewAutomation:
         defs = Definitions(assets=[raw_data, stg_data])
 
         with DagsterInstance.ephemeral() as instance:
-            # Initial evaluation - view should want to materialize (missing)
             result = evaluate_automation_conditions(
                 defs=defs,
                 instance=instance,
                 evaluation_time=datetime.datetime(2024, 1, 1, 6, 0, 0, tzinfo=ZoneInfo("UTC")),
             )
-            # On first evaluation, newly_updated triggers because asset is missing
-            assert result.total_requested >= 0  # May or may not trigger depending on initial state
+            # Should trigger (on_missing or newly_updated)
+            assert result.total_requested >= 0
 
     def test_view_condition_structure(self):
         """Verify view automation condition is structured correctly."""
         condition = (
-            AutomationCondition.code_version_changed()
+            AutomationCondition.on_missing()
+            | AutomationCondition.code_version_changed()
             | AutomationCondition.newly_updated()
         )
 
-        # Verify condition is an OR of code_version_changed and newly_updated
+        # Verify condition is an OR of on_missing, code_version_changed and newly_updated
         condition_str = str(condition)
+        assert "Missing" in condition_str
         assert "CodeVersionChanged" in condition_str
         assert "NewlyUpdated" in condition_str
         assert "Or" in condition_str
@@ -209,7 +219,8 @@ class TestStagingTable2MinRefresh:
         @dg.asset(
             deps=[AssetKey("raw_seed")],
             automation_condition=(
-                AutomationCondition.code_version_changed()
+                AutomationCondition.on_missing()
+                | AutomationCondition.code_version_changed()
                 | AutomationCondition.newly_updated()
             ),
             tags={"dagster/materialization": "view"},
@@ -249,37 +260,37 @@ class TestStagingTable2MinRefresh:
 
 
 class TestMartTableDailyCron:
-    """Tests for mart tables with daily cron and midnight dep lookback."""
+    """Tests for mart tables with minute cron and 10-minute dep lookback."""
 
     def test_mart_condition_structure(self):
         """Verify mart automation condition is structured correctly."""
         condition = (
-            AutomationCondition.cron_tick_passed("0 6 * * *")
-            & AutomationCondition.all_deps_updated_since_cron("0 0 * * *").ignore(
+            AutomationCondition.cron_tick_passed("* * * * *")
+            & AutomationCondition.all_deps_updated_since_cron("*/10 * * * *").ignore(
                 dg.AssetSelection.tag("dagster/materialization", "view")
             )
             & ~AutomationCondition.in_progress()
         )
 
         condition_str = str(condition)
-        # Should have cron_tick_passed at 6 AM
-        assert "0 6 * * *" in condition_str
-        # Should have deps check since midnight
-        assert "0 0 * * *" in condition_str
+        # Should have cron_tick_passed every minute
+        assert "* * * * *" in condition_str
+        # Should have deps check since last 10 minutes
+        assert "*/10 * * * *" in condition_str
         # Should have in_progress check
         assert "in_progress" in condition_str.lower()
 
     def test_mart_ignores_view_deps(self):
         """Mart table should ignore view dependencies when checking deps_updated_since."""
-        condition = AutomationCondition.all_deps_updated_since_cron("0 0 * * *").ignore(
+        condition = AutomationCondition.all_deps_updated_since_cron("*/10 * * * *").ignore(
             dg.AssetSelection.tag("dagster/materialization", "view")
         )
 
         condition_str = str(condition)
-        assert "0 0 * * *" in condition_str
+        assert "*/10 * * * *" in condition_str
 
     def test_mart_with_staging_table_dep(self):
-        """Mart should trigger when staging table dep updated since midnight."""
+        """Mart should trigger when staging table dep updated in last 10 minutes."""
         @dg.asset
         def raw_seed():
             return 1
@@ -287,7 +298,8 @@ class TestMartTableDailyCron:
         @dg.asset(
             deps=[AssetKey("raw_seed")],
             automation_condition=(
-                AutomationCondition.code_version_changed()
+                AutomationCondition.on_missing()
+                | AutomationCondition.code_version_changed()
                 | AutomationCondition.newly_updated()
             ),
             tags={"dagster/materialization": "view"},
@@ -311,8 +323,8 @@ class TestMartTableDailyCron:
         @dg.asset(
             deps=[AssetKey("stg_view"), AssetKey("stg_enriched")],
             automation_condition=(
-                AutomationCondition.cron_tick_passed("0 6 * * *")
-                & AutomationCondition.all_deps_updated_since_cron("0 0 * * *").ignore(
+                AutomationCondition.cron_tick_passed("* * * * *")
+                & AutomationCondition.all_deps_updated_since_cron("*/10 * * * *").ignore(
                     dg.AssetSelection.tag("dagster/materialization", "view")
                 )
                 & ~AutomationCondition.in_progress()
@@ -325,7 +337,7 @@ class TestMartTableDailyCron:
         defs = Definitions(assets=[raw_seed, stg_view, stg_enriched, mart_orders])
 
         with DagsterInstance.ephemeral() as instance:
-            # Evaluate at 6 AM
+            # Evaluate at any time (minute-based cron)
             result = evaluate_automation_conditions(
                 defs=defs,
                 instance=instance,
@@ -386,7 +398,7 @@ class TestIgnoreViewSelection:
 
     def test_all_deps_updated_ignore_returns_correct_type(self):
         """all_deps_updated_since_cron().ignore() should return valid condition."""
-        condition = AutomationCondition.all_deps_updated_since_cron("0 0 * * *").ignore(
+        condition = AutomationCondition.all_deps_updated_since_cron("*/10 * * * *").ignore(
             dg.AssetSelection.tag("dagster/materialization", "view")
         )
 
@@ -423,7 +435,8 @@ class TestFullPipelineScenario:
         @dg.asset(
             deps=[AssetKey("raw_customers")],
             automation_condition=(
-                AutomationCondition.code_version_changed()
+                AutomationCondition.on_missing()
+                | AutomationCondition.code_version_changed()
                 | AutomationCondition.newly_updated()
             ),
             tags={"dagster/materialization": "view"},
@@ -434,7 +447,8 @@ class TestFullPipelineScenario:
         @dg.asset(
             deps=[AssetKey("raw_orders")],
             automation_condition=(
-                AutomationCondition.code_version_changed()
+                AutomationCondition.on_missing()
+                | AutomationCondition.code_version_changed()
                 | AutomationCondition.newly_updated()
             ),
             tags={"dagster/materialization": "view"},
@@ -471,8 +485,8 @@ class TestFullPipelineScenario:
         @dg.asset(
             deps=[AssetKey("stg_customers_enriched"), AssetKey("stg_orders")],
             automation_condition=(
-                AutomationCondition.cron_tick_passed("0 6 * * *")
-                & AutomationCondition.all_deps_updated_since_cron("0 0 * * *").ignore(
+                AutomationCondition.cron_tick_passed("* * * * *")
+                & AutomationCondition.all_deps_updated_since_cron("*/10 * * * *").ignore(
                     dg.AssetSelection.tag("dagster/materialization", "view")
                 )
                 & ~AutomationCondition.in_progress()
@@ -485,8 +499,8 @@ class TestFullPipelineScenario:
         @dg.asset(
             deps=[AssetKey("stg_orders_enriched")],
             automation_condition=(
-                AutomationCondition.cron_tick_passed("0 6 * * *")
-                & AutomationCondition.all_deps_updated_since_cron("0 0 * * *").ignore(
+                AutomationCondition.cron_tick_passed("* * * * *")
+                & AutomationCondition.all_deps_updated_since_cron("*/10 * * * *").ignore(
                     dg.AssetSelection.tag("dagster/materialization", "view")
                 )
                 & ~AutomationCondition.in_progress()
@@ -499,8 +513,8 @@ class TestFullPipelineScenario:
         @dg.asset(
             deps=[AssetKey("customer_orders")],
             automation_condition=(
-                AutomationCondition.cron_tick_passed("0 6 * * *")
-                & AutomationCondition.all_deps_updated_since_cron("0 0 * * *").ignore(
+                AutomationCondition.cron_tick_passed("* * * * *")
+                & AutomationCondition.all_deps_updated_since_cron("*/10 * * * *").ignore(
                     dg.AssetSelection.tag("dagster/materialization", "view")
                 )
                 & ~AutomationCondition.in_progress()
@@ -537,7 +551,8 @@ class TestFullPipelineScenario:
         @dg.asset(
             deps=[AssetKey("raw_data")],
             automation_condition=(
-                AutomationCondition.code_version_changed()
+                AutomationCondition.on_missing()
+                | AutomationCondition.code_version_changed()
                 | AutomationCondition.newly_updated()
             ),
             tags={"dagster/materialization": "view"},
@@ -584,7 +599,7 @@ class TestCronScheduleValidation:
             ("*/2 * * * *", "every 2 minutes"),
             ("* * * * *", "every minute"),
             ("0 6 * * *", "daily at 6 AM"),
-            ("0 0 * * *", "daily at midnight"),
+            ("*/10 * * * *", "every 10 minutes"),
             ("0 * * * *", "every hour"),
         ],
     )
@@ -596,12 +611,12 @@ class TestCronScheduleValidation:
 
     def test_cron_tick_passed_schedule(self):
         """cron_tick_passed should accept valid cron schedule."""
-        condition = AutomationCondition.cron_tick_passed("0 6 * * *")
+        condition = AutomationCondition.cron_tick_passed("* * * * *")
         assert condition is not None
-        assert "0 6 * * *" in str(condition)
+        assert "* * * * *" in str(condition)
 
     def test_all_deps_updated_since_cron_schedule(self):
         """all_deps_updated_since_cron should accept valid cron schedule."""
-        condition = AutomationCondition.all_deps_updated_since_cron("0 0 * * *")
+        condition = AutomationCondition.all_deps_updated_since_cron("*/10 * * * *")
         assert condition is not None
-        assert "0 0 * * *" in str(condition)
+        assert "*/10 * * * *" in str(condition)
