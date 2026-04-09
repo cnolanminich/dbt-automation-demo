@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: external
+    schema: external
+    tables:
+      - name: product_catalog
+      - name: web_events
+      - name: enriched_web_sessions
+      - name: customer_demographics

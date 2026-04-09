@@ -3,5 +3,5 @@ analytics_dbt:
   outputs:
     dev:
       type: duckdb
-      path: dev.duckdb  # Persistent database file
+      path: /Users/christian/code/demo-gen/my-demos/dbt-automation-demo/analytics_dbt/dev.duckdb
       threads: 4

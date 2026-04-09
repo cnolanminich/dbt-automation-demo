@@ -67,6 +67,8 @@ class CustomDbtComponent(DbtProjectComponent):
         existing_tags["dagster/materialization"] = materialized
 
         # Determine the automation condition based on materialization and tags
+        model_name = fqn[-1] if fqn else ""
+
         if materialized == "view":
             # Views: refresh when new (missing) or when code version changes
             # Does NOT refresh on upstream updates - only on code changes
@@ -74,29 +76,24 @@ class CustomDbtComponent(DbtProjectComponent):
                 dg.AutomationCondition.missing()
                 | dg.AutomationCondition.code_version_changed()
             )
-        elif "refresh_2min" in dbt_tags:
-            # Staging tables with refresh_2min tag: every 2 minutes
-            # These are frequently-updated tables that feed into downstream marts
-            automation_condition = (
-                dg.AutomationCondition.on_cron("*/2 * * * *")
-                & ~dg.AutomationCondition.in_progress()
-            )
-        elif "marts" in fqn:
-            # Mart tables (analytics): trigger every minute, but only if deps updated in last 10 min
-            # - Ignores view dependencies (views refresh reactively via newly_updated)
-            # - Uses 10-minute lookback for dependency check
-            #   This allows upstream tables that ran recently to trigger mart refresh
-            automation_condition = (
-                dg.AutomationCondition.cron_tick_passed("* * * * *")  # Trigger every minute
-                & dg.AutomationCondition.all_deps_updated_since_cron("*/10 * * * *")
-                & ~dg.AutomationCondition.in_progress()
-            )
-        else:
-            # Other non-view models: hourly refresh
+        elif model_name == "customer_lifetime_value":
+            # CLV mart: on_cron every minute with 5-minute lookback for all upstream deps
             automation_condition = (
                 dg.AutomationCondition.on_cron("* * * * *")
-                & ~dg.AutomationCondition.in_progress()
-            )
+                & dg.AutomationCondition.all_deps_updated_since_cron("*/5 * * * *")
+            ).resolve_through_virtual()
+        elif "refresh_2min" in dbt_tags:
+            # Staging tables with refresh_2min tag: on_cron every 2 minutes
+            automation_condition = dg.AutomationCondition.on_cron("*/2 * * * *").resolve_through_virtual()
+        elif "marts" in fqn:
+            # Mart tables: on_cron every minute with 10-minute dep lookback
+            automation_condition = (
+                dg.AutomationCondition.on_cron("* * * * *")
+                & dg.AutomationCondition.all_deps_updated_since_cron("*/10 * * * *")
+            ).resolve_through_virtual()
+        else:
+            # Other non-view models: on_cron hourly
+            automation_condition = dg.AutomationCondition.on_cron("* * * * *").resolve_through_virtual()
 
         return base_spec.replace_attributes(
             automation_condition=automation_condition,

@@ -13,10 +13,6 @@ attributes:
     profiles_dir: "{{ project_root }}/analytics_dbt"
   translation_settings:
     enable_dbt_views_as_virtual_assets: true
-    enable_asset_checks: true
-  # include_metadata:
-  #   - column_metadata
-  #   - insights
   
 ---
 # Hourly schedule for dbt tables (excluding views)
@@ -47,3 +43,28 @@ attributes:
     job_name: "clv_seed_to_mart_job"
     cron_schedule: "0 6 * * *"
     asset_selection: 'key:"raw_customers" or key:"customer_lifetime_value"'
+
+
+---
+type: dbt_automation_demo.defs.components.safe_scheduled_job_component.ScheduledJobComponent
+
+attributes:
+    job_name: "seed_to_scoring_report_job"
+    cron_schedule: "0 6 * * *"
+    asset_selection: 'key:"raw_customers" or key:"customer_scoring_report"'
+
+---
+type: dbt_automation_demo.defs.components.safe_scheduled_job_component.ScheduledJobComponent
+
+attributes:
+    job_name: "python_asset_to_dbt_table_job"
+    cron_schedule: "0 6 * * *"
+    asset_selection: 'key:"external/customer_demographics" or key:"customer_lifetime_value"'
+
+---
+type: dbt_automation_demo.defs.components.safe_scheduled_job_component.ScheduledJobComponent
+
+attributes:
+    job_name: "python_asset_and_dbt_seed_to_dbt_table_and_python_asset_job"
+    cron_schedule: "0 6 * * *"
+    asset_selection: 'key:"external/customer_demographics" or key:"raw_customers" or key:"customer_lifetime_value" or key:"customer_scoring_report"'
