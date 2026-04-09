@@ -47,7 +47,7 @@ class CustomDbtComponent(DbtProjectComponent):
         # Create translator with custom settings
         self.translator = DagsterDbtTranslator(
             settings=DagsterDbtTranslatorSettings(
-                enable_dbt_views_as_virtual_assets=False,
+                enable_dbt_views_as_virtual_assets=True,
                 enable_asset_checks=True
             )
         )
