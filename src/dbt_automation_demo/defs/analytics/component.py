@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from typing import Any, Optional
 
 import dagster as dg
-from dagster_dbt import DbtProjectComponent
+from dagster_dbt import DbtProjectComponent, DagsterDbtTranslator, DagsterDbtTranslatorSettings
 from dagster_dbt.dbt_project import DbtProject
 
 
@@ -41,6 +41,16 @@ class CustomDbtComponent(DbtProjectComponent):
     - Select tables only: `tag:dagster/materialization=table`
     - Exclude views: `- tag:dagster/materialization=view`
     """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Create translator with custom settings
+        self.translator = DagsterDbtTranslator(
+            settings=DagsterDbtTranslatorSettings(
+                enable_dbt_views_as_virtual_assets=False,
+                enable_asset_checks=True
+            )
+        )
 
     def get_asset_spec(
         self, manifest: Mapping[str, Any], unique_id: str, project: Optional[DbtProject]
@@ -78,9 +88,7 @@ class CustomDbtComponent(DbtProjectComponent):
             # Staging tables with refresh_2min tag: every 2 minutes
             # These are frequently-updated tables that feed into downstream marts
             automation_condition = (
-                dg.AutomationCondition.on_cron("*/2 * * * *").ignore(
-                    dg.AssetSelection.tag("dagster/materialization", "view")
-                )
+                dg.AutomationCondition.on_cron("*/2 * * * *")
                 & ~dg.AutomationCondition.in_progress()
             )
         elif "marts" in fqn:
@@ -90,18 +98,13 @@ class CustomDbtComponent(DbtProjectComponent):
             #   This allows upstream tables that ran recently to trigger mart refresh
             automation_condition = (
                 dg.AutomationCondition.cron_tick_passed("* * * * *")  # Trigger every minute
-                & dg.AutomationCondition.all_deps_updated_since_cron("*/10 * * * *").ignore(
-                    dg.AssetSelection.tag("dagster/materialization", "view")  # Ignore views
-                )
+                & dg.AutomationCondition.all_deps_updated_since_cron("*/10 * * * *")
                 & ~dg.AutomationCondition.in_progress()
             )
         else:
             # Other non-view models: hourly refresh
-            # - Ignores view dependencies
             automation_condition = (
-                dg.AutomationCondition.on_cron("* * * * *").ignore(
-                    dg.AssetSelection.tag("dagster/materialization", "view")
-                )
+                dg.AutomationCondition.on_cron("* * * * *")
                 & ~dg.AutomationCondition.in_progress()
             )
 

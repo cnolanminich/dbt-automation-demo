@@ -3,7 +3,7 @@ name = "dbt_automation_demo"
 requires-python = ">=3.10,<3.15"
 version = "0.1.0"
 dependencies = [
-    "dagster==1.12.12",
+    "dagster==1.12.22",
     "dagster-dbt>=0.28.12",
     "dbt-duckdb>=1.10.0",
 ]

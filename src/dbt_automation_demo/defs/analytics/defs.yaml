@@ -11,14 +11,36 @@ attributes:
   project:
     project_dir: "{{ project_root }}/analytics_dbt"
     profiles_dir: "{{ project_root }}/analytics_dbt"
+  # include_metadata:
+  #   - column_metadata
+  #   - insights
+  
 ---
-# Hourly schedule for dbt tables (excluding views) with run-in-progress protection
+# Hourly schedule for dbt tables (excluding views)
 # Uses the `dagster/materialization` tag to programmatically select only tables
-# Before each tick, checks if selected assets are already running and skips if so
-type: dbt_automation_demo.defs.components.safe_scheduled_job_component.SafeScheduledJobComponent
+type: dbt_automation_demo.defs.components.safe_scheduled_job_component.ScheduledJobComponent
 
 attributes:
   job_name: "hourly_dbt_tables_job"
   cron_schedule: "0 * * * *"  # Every hour on the hour
   asset_selection: "tag:dagster/materialization=table"  # Programmatically select tables, exclude views
-  skip_reason_prefix: "Hourly dbt tables schedule"
+
+---
+# Full lineage job: seeds → staging views → intermediate views → CLV mart
+# Materializes the entire chain from root sources through 3 intermediate view
+# layers to the final customer_lifetime_value table
+type: dbt_automation_demo.defs.components.safe_scheduled_job_component.ScheduledJobComponent
+
+attributes:
+  job_name: "clv_full_lineage_job"
+  cron_schedule: "0 6 * * *"  # Daily at 6 AM UTC
+  asset_selection: '+key:"customer_lifetime_value"'  # All upstream + the mart itself
+
+
+---
+type: dbt_automation_demo.defs.components.safe_scheduled_job_component.ScheduledJobComponent
+
+attributes:
+    job_name: "clv_seed_to_mart_job"
+    cron_schedule: "0 6 * * *"
+    asset_selection: 'key:"raw_customers" or key:"customer_lifetime_value"'
