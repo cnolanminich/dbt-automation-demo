@@ -11,6 +11,9 @@ attributes:
   project:
     project_dir: "{{ project_root }}/analytics_dbt"
     profiles_dir: "{{ project_root }}/analytics_dbt"
+  translation_settings:
+    enable_dbt_views_as_virtual_assets: true
+    enable_asset_checks: true
   # include_metadata:
   #   - column_metadata
   #   - insights

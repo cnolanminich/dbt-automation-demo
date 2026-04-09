@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from typing import Any, Optional
 
 import dagster as dg
-from dagster_dbt import DbtProjectComponent, DagsterDbtTranslator, DagsterDbtTranslatorSettings
+from dagster_dbt import DbtProjectComponent
 from dagster_dbt.dbt_project import DbtProject
 
 
@@ -41,16 +41,6 @@ class CustomDbtComponent(DbtProjectComponent):
     - Select tables only: `tag:dagster/materialization=table`
     - Exclude views: `- tag:dagster/materialization=view`
     """
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        # Create translator with custom settings
-        self.translator = DagsterDbtTranslator(
-            settings=DagsterDbtTranslatorSettings(
-                enable_dbt_views_as_virtual_assets=True,
-                enable_asset_checks=True
-            )
-        )
 
     def get_asset_spec(
         self, manifest: Mapping[str, Any], unique_id: str, project: Optional[DbtProject]
